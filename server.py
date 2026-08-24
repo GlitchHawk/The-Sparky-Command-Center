@@ -1333,6 +1333,14 @@ PAGE = r"""<!DOCTYPE html>
   .perf .pc .pv.violet{color:var(--accent2)}
   .perf .pc .pv .pu{font-size:11px;color:var(--dim);font-weight:600;margin-left:3px}
   .perf .pc.idle .pv{color:var(--dim)}
+  .liverow{display:flex;align-items:center;gap:8px;margin:6px 0 2px;padding:7px 10px;
+    border:1px solid rgba(167,139,250,0.35);border-radius:8px;
+    background:rgba(167,139,250,0.10);font-size:12.5px;font-weight:700;
+    font-variant-numeric:tabular-nums;color:var(--accent2)}
+  .liverow .ldot{width:7px;height:7px;border-radius:50%;background:var(--accent2);
+    box-shadow:0 0 8px var(--accent2);animation:lrpulse 1.2s ease-in-out infinite;flex:none}
+  .liverow .lsub{color:var(--dim);font-weight:600;font-size:11.5px;margin-left:auto}
+  @keyframes lrpulse{0%,100%{opacity:1}50%{opacity:0.35}}
 
   /* fabric switch: fan grid + fabric-port throughput tiles */
   .swcard{
@@ -1558,6 +1566,22 @@ function renderTokens(tk){
       <span class="ln"></span></div>
     <div class="grid">${cards}</div>`;
 }
+function liveReqRow(m){
+  // Pops only while requests are in flight: per-request decode speed.
+  // decode_tps is the whole engine's rate over the last poll window, so with
+  // N running the honest per-request figure is the ~N-way split.
+  const n = m.running||0;
+  const d = m.decode_tps;
+  if(!n || d==null) return '';
+  if(d<=0){
+    const pf = m.prefill_tps;
+    return `<div class="liverow"><span class="ldot"></span>${n} live · ${pf>0? 'prefilling '+fmtTps(pf)+' tok/s' : 'starting up'}<span class="lsub">no decode yet</span></div>`;
+  }
+  const per = fmtTps(d/n);
+  return n>1
+    ? `<div class="liverow"><span class="ldot"></span>${n} live · ~${per} tok/s each<span class="lsub">${fmtTps(d)} combined</span></div>`
+    : `<div class="liverow"><span class="ldot"></span>1 live · ${per} tok/s<span class="lsub">decode</span></div>`;
+}
 function fmtTps(v){
   if(v==null) return '-';
   return v>=100? v.toFixed(0) : v.toFixed(1);
@@ -1584,6 +1608,7 @@ function renderModel(m){
     <div class="row"><span class="label">KV-cache</span><span class="val">${m.kv_pct!=null?m.kv_pct.toFixed(1)+' %':'-'}</span></div>
     <div class="bar"><span style="width:${m.kv_pct||0}%"></span></div>
     <div class="row"><span class="label">Requests</span><span class="val">${m.running!=null?m.running:'-'} running · ${m.waiting!=null?m.waiting:'-'} waiting</span></div>
+    ${liveReqRow(m)}
     ${m.gpus?`<div class="row"><span class="label">On</span><span class="val">${escH(m.gpus)}</span></div>`:''}
     ${freshLine(m.ts)}
     ` : `<div class="err">${escH(m.label)} offline - ${escH(m.err||'no /metrics')}</div>${freshLine(m.ts, m.err)}`}
