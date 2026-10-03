@@ -1930,6 +1930,7 @@ async function tickOps(){
 setInterval(tickOps,3000);tickOps();
 const OPS_JOBS={
   launch:()=>({node:$ops.node.value,variant:$ops.variant.value}),
+  smoke:()=>({node:$ops.node.value}),
   stop:()=>({node:$ops.node.value}),
   'collect-logs':()=>({}),
   audit:()=>({}),

@@ -380,15 +380,19 @@ def start_ops_workers():
 # ---- job implementations -----------------------------------------------------
 
 def _op_smoke(jid, args):
-    host = args.get("host") or "127.0.0.1"
+    node = args.get("node") or ""
+    nrec = node_by_name(node) if node else node_by_name(OPS["head"])
+    host = args.get("host") or (nrec or {}).get("host") or "127.0.0.1"
     port = int(args.get("port") or 8000)
     url = f"http://{host}:{port}/v1/models"
     _job_note(jid, f"GET {url} (6s timeout, read-only)")
     argv = ["curl", "-sm", "6", url]
     rc, out, err = _run(argv, 10)
     if rc != 0:
-        _job_note(jid, f"endpoint unreachable (curl rc={rc}): {err[:120]}")
-        return {"ok": False, "error": f"curl rc={rc}"}
+        hint = (" (worker rank - the engine endpoint lives on the head; smoke "
+                "spark instead)") if (nrec and nrec.get("name") == OPS["worker"]) else ""
+        _job_note(jid, f"endpoint unreachable (curl rc={rc}){hint}")
+        return {"ok": False, "error": f"curl rc={rc}: no engine on {host}:{port}{hint}"}
     try:
         ids = [m.get("id") for m in json.loads(out).get("data", [])]
     except ValueError:
@@ -651,9 +655,11 @@ def api_post(action, req):
     if req.get("key") != OPS_KEY:
         return {"ok": False, "error": "bad or missing ops key"}
     if action == "smoke":
-        a = {"host": req.get("host") or "127.0.0.1",
+        a = {"node": req.get("node"),
+             "host": req.get("host"),
              "port": int(req.get("port") or 8000)}
-        jid = job_submit("smoke", a, f"smoke probe {a['host']}:{a['port']}")
+        jid = job_submit("smoke", a,
+                         f"smoke probe {a.get('host') or a.get('node') or 'head'}:{a['port']}")
         result = _op_smoke(jid, a)
         _job_set(jid, state="done", ended=_now(), result=result)
         return {"ok": True, "job": jid, "smoke": result}
