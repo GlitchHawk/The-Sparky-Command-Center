@@ -1363,6 +1363,26 @@ PAGE = r"""<!DOCTYPE html>
   .err{color:var(--red);font-size:11.5px;margin-top:6px}
   .footer{margin-top:24px;text-align:center;color:var(--dim);font-size:11px;
     letter-spacing:0.1em;text-transform:uppercase}
+/* ── local fix (upstream issue): theme dropdown styling was missing ──
+   The JS toggles #theme-menu.open, but no CSS defined the menu's hidden /
+   open states, so the five theme buttons rendered permanently inline.
+   These rules implement the intended popper behavior (uses existing
+   tokens; sunset = :root, so values are theme-agnostic). */
+#theme-wrap{position:relative;display:inline-block}
+#theme-menu{position:absolute;top:calc(100% + 6px);right:0;z-index:60;
+    display:none;flex-direction:column;gap:4px;padding:8px;border-radius:10px;
+    background:var(--card);border:1px solid var(--border);
+    box-shadow:0 8px 24px rgba(0,0,0,.35);min-width:150px}
+#theme-menu.open{display:flex}
+.theme-opt{display:flex;align-items:center;gap:8px;padding:6px 10px;
+    border:1px solid transparent;border-radius:8px;background:transparent;
+    color:var(--txt);font-family:var(--display);font-size:11px;font-weight:700;
+    letter-spacing:0.1em;cursor:pointer;transition:background .15s}
+.theme-opt:hover{background:rgba(255,255,255,0.06)}
+.theme-opt[aria-checked="true"]{border-color:var(--accent);color:var(--accent)}
+.theme-opt i{width:14px;height:14px;border-radius:4px;display:inline-block;
+    background:linear-gradient(135deg,var(--s1),var(--s2));flex:none;
+    border:1px solid rgba(255,255,255,0.18)}
 </style>
 </head>
 <body>
