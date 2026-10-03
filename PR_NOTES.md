@@ -1,4 +1,9 @@
-# Fleet Ops PR — engineering notes for review
+# Fleet Ops — engineering notes
+
+Status: LIVE on ghost since 2026-10-03 (main @ d6d0dba + 82da3a6, 0b402ad; tag
+tier3-v1). Offsite mirror: fork GlitchHawk/The-Sparky-Command-Center (main +
+tier3). Personal deployment of tonyd2wild's dashboard — not upstream-bound;
+`origin` stays read-only for audit drift comparison.
 
 ## What ships
 `fleet_ops.py` (std-lib only) + three integration points in `server.py`
@@ -6,15 +11,19 @@
 + HTML + JS block appended to the single-page UI (`OPS PANEL` section).
 
 ## Backend contract
-- `POST /api/ops/<action>` — JSON body `{key, ...}`:
-  - `smoke {host, port}` — inline curl of /v1/models, journaled like a job
+- `POST /api/ops/<action>` — key accepted in query string OR JSON body; body
+  wins on collision:
+  - `smoke {node|host, port}` — engine probe; `node` resolves via config
+    (head spark serves :8000; worker spark2 never binds it — selecting it
+    returns guidance, not a silent failure)
   - `launch {node, variant}` — preflight-gated `launch-glm53.sh <rank> <variant>`
   - `stop {node[, force]}` — guarded docker rm -f
   - `collect-logs` — docker logs --tail 600 → data/bootlogs/
   - `audit` — phases + drift + upstream sha, read-only
   - `snapshot-image` — `docker save | gzip -1` streamed to ghost backup dir
 - `GET /api/ops/state|/api/ops/job/<id>|/api/ops/events` — read-only, no token
-- Keys: config.json `server.ops_key` or `SPARKY_OPS_KEY` env (default `sparky-ops-local`)
+- Key config: `server.ops_key` in config.json or `SPARKY_OPS_KEY` env
+  (default `sparky-ops-local`)
 - Background daemon threads: ops-probe (10s per node, read-only ssh poll) and
   ops-jobs (serialized mutation queue). Both die with the process; no timers, no systemd units, no cron.
 
@@ -28,20 +37,24 @@
 5. Ghost: no reboot in scope; service restart is user-level, systemd `Restart=on-failure` covers it.
    Hermes harness and all other ghost services are untouched.
 
-## Bootstrap
-The panel notes `API-KEY: sparky-ops-local (default)` until the operator writes a real key into
-config.json `server.ops_key`. Local-tailnet threat model; documented, not hidden.
+## Field-tested quirks
+- Worker rank never binds :8000 and containers carry no docker healthcheck, so
+  worker "serving" = Up + no dashboard launch in the last 35 min
+  (WORKER_BOOT_WINDOW_S); the head must answer on :8000.
+- MemAvailable on the Sparks reads 0.8-1.2G while serving (121/122G used,
+  112G cgroup cap) — normal for this stack, not a warning.
+- The panel stores the ops key in localStorage, prompted once.
 
 ## Verification performed (2026-10-03)
-- pyflakes clean both files; 5/5 existing unit tests pass.
-- Hermetic end-to-end: fake `_run` drive of probe parse, phase classification
-  (`Up`+port ⇒ serving), king audit job (writes event, baseline, upstream check), job error
-  paths, token gating, launch purge guard. 8/8 assertions green.
-- Live soak: service restarted on ghost (`systemctl --user restart`), 8-minute soak with
-  read-only probes hitting both real nodes every 10s over the tailnet — zero container
-  restarts on either Spark (verified `docker inspect` orchards before/after),
-  Hermès endpoint 200 throughout.
-- UI: panel renders, state/actions/audit verified over the live HTTP API.
+- pyflakes clean; 5/5 pre-existing unit tests pass; full page JS node --check OK.
+- Hermetic battery: probe parse, phase-classification truth table, job lifecycle
+  incl. error paths, key gating, purge guard.
+- Live: both real ranks classified `serving`; smoke via API returned
+  `glm-5.3-flash`; audit job completed (drift + upstream sha); UI-exact click
+  shapes replayed via curl after two real UI bugs were fixed (query-key auth;
+  Smoke default target).
+- Cluster proof: containers `started=2026-09-20…, restarts=0` before and after
+  the entire buildout.
 
 ## Known limitations
 - Single mutation worker (by design: one heavyweight ops transition at a time).
