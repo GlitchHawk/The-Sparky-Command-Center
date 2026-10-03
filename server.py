@@ -34,6 +34,8 @@ import urllib.parse
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+import fleet_ops  # Tier-3 ops layer, same dir; wired in main()
+
 
 # ----------------------------------------------------------------------------
 # Config loading
@@ -1064,18 +1066,48 @@ class Handler(BaseHTTPRequestHandler):
     def _send(self, code, body, ctype="text/html; charset=utf-8"):
         if isinstance(body, str):
             body = body.encode("utf-8")
-        self.send_response(code)
-        self.send_header("Content-Type", ctype)
-        self.send_header("Content-Length", str(len(body)))
-        self.send_header("Cache-Control", "no-store")
-        self.send_header("Access-Control-Allow-Origin", "*")
-        self.end_headers()
+        try:
+            self.send_response(code)
+            self.send_header("Content-Type", ctype)
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.end_headers()
+        except (ConnectionError, OSError, BrokenPipeError):
+            return
         try:
             self.wfile.write(body)
         except Exception:
             pass
 
+    def do_POST(self):
+        if not self.path.startswith("/api/ops/"):
+            self._send(404, json.dumps({"ok": False, "error": "unknown path"}),
+                       "application/json")
+            return
+        try:
+            ln = int(self.headers.get("Content-Length") or 0)
+            req = json.loads(self.rfile.read(ln) or b"{}") if ln else {}
+        except (ValueError, UnicodeDecodeError):
+            req = {}
+        action = self.path[len("/api/ops/"):].strip("/")
+        out = fleet_ops.api_post(action, req if isinstance(req, dict) else {})
+        self._send(200, json.dumps(out), "application/json")
+
     def do_GET(self):
+        if self.path.startswith("/api/ops/state"):
+            self._send(200, json.dumps(fleet_ops.api_state()),
+                       "application/json")
+            return
+        if self.path.startswith("/api/ops/job/"):
+            jid = self.path.rsplit("/", 1)[-1]
+            self._send(200, json.dumps(fleet_ops.api_job(jid)),
+                       "application/json")
+            return
+        if self.path.startswith("/api/ops/events"):
+            self._send(200, json.dumps(fleet_ops.read_events(120)),
+                       "application/json")
+            return
         if self.path.startswith("/api/metrics"):
             self._send(200, json.dumps(snapshot()), "application/json")
             return
@@ -1383,6 +1415,23 @@ PAGE = r"""<!DOCTYPE html>
 .theme-opt i{width:14px;height:14px;border-radius:4px;display:inline-block;
     background:linear-gradient(135deg,var(--s1),var(--s2));flex:none;
     border:1px solid rgba(255,255,255,0.18)}
+/* ── Ops panel ────────────────────────────────────────────────────────── */
+#ops-grid{display:flex;flex-wrap:wrap;gap:8px;align-items:center;min-height:24px}
+.opspill{display:inline-flex;gap:6px;align-items:center;font-family:var(--mono);
+  font-size:11px;padding:3px 10px;border:1px solid var(--border);
+  border-radius:999px;background:var(--card)}
+.opp-ok{color:var(--green)}.opp-warn{color:var(--yellow)}
+.opp-bad{color:var(--red)}.opp-dim{color:var(--dim)}
+#ops-btnrow{display:flex;flex-wrap:wrap;gap:6px;margin:10px 0 6px}
+.opsbtn{font-family:var(--display);font-size:11px;letter-spacing:.06em;
+  font-weight:700;padding:7px 11px;border-radius:8px;
+  border:1px solid var(--border);background:var(--card);color:var(--txt);
+  cursor:pointer;transition:border-color .15s,color .15s}
+.opsbtn:hover{border-color:var(--accent);color:var(--accent)}
+.opsbtn:disabled{opacity:.45;cursor:default}
+select.opsbtn{appearance:none;padding-right:14px}
+#ops-log{font-family:var(--mono);font-size:11px;line-height:1.5;max-height:170px;
+  overflow:auto;white-space:pre-wrap;margin:4px 0 0;opacity:.85}
 </style>
 </head>
 <body>
@@ -1465,6 +1514,29 @@ PAGE = r"""<!DOCTYPE html>
   <section class="mod" data-mod="video" id="mod-video" hidden>
     <div class="modbar"><span class="grip">&#8942;&#8942;</span><span class="chev">&#9662;</span>Video Generation<span class="ln"></span></div>
     <div class="mod-body"><div class="grid" id="comfy-grid"></div></div>
+  </section>
+  <section class="mod" data-mod="ops">
+    <div class="modbar"><span class="grip">&#8942;&#8942;</span><span class="chev">&#9662;</span>Fleet Ops<span class="ln"></span></div>
+    <div class="mod-body">
+      <div id="ops-grid"><span class="opspill opp-dim">connecting to ops&hellip;</span></div>
+      <div id="ops-btnrow">
+        <select id="ops-node" class="opsbtn" title="target node">
+          <option value="spark">spark (head)</option>
+          <option value="spark2">spark2 (worker)</option>
+        </select>
+        <select id="ops-variant" class="opsbtn" title="weights variant">
+          <option value="redhat">redhat</option>
+          <option value="uncen">uncen</option>
+        </select>
+        <button class="opsbtn" id="ops-launch">Launch rank</button>
+        <button class="opsbtn" id="ops-stop">Stop rank</button>
+        <button class="opsbtn" id="ops-smoke">Smoke</button>
+        <button class="opsbtn" id="ops-logs">Collect logs</button>
+        <button class="opsbtn" id="ops-audit">Audit</button>
+        <button class="opsbtn" id="ops-snap">Snapshot image</button>
+      </div>
+      <pre id="ops-log">waiting for ops state&#8230;</pre>
+    </div>
   </section>
 </div>
 
@@ -1809,6 +1881,89 @@ async function tickComfy(){
 tickComfy();
 setInterval(tickComfy, 5000);
 
+// ── Fleet Ops panel ──────────────────────────────────────────────────────
+// Read-only poll of /api/ops/state every 3s; actions POST with the key from
+// localStorage (prompted once) and poll their job to a terminal state.
+const OPS_LS_KEY='sparky.opsKey';
+const $ops={grid:document.getElementById('ops-grid'),log:document.getElementById('ops-log'),
+  node:document.getElementById('ops-node'),variant:document.getElementById('ops-variant')};
+const opsBusy={};
+function opsLog(line){$ops.log.textContent=(line+'\n'+$ops.log.textContent).split('\n').slice(0,120).join('\n');}
+function esc(s){return String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
+async function opsPost(action,body){
+  let key=localStorage.getItem(OPS_LS_KEY);
+  if(!key){key=prompt('Ops key (server.ops_key):')||'';if(key)localStorage.setItem(OPS_LS_KEY,key);}
+  const r=await fetch('/api/ops/'+action+'?key='+encodeURIComponent(key),{
+    method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body||{}),cache:'no-store'});
+  const d=await r.json();
+  if(!d.ok&&(d.error||'').includes('key'))localStorage.removeItem(OPS_LS_KEY);
+  return d;
+}
+function pillFor(nd){
+  const ph=(nd&&nd.phase)||'?';
+  const cls={ 'serving':'opp-ok','booting':'opp-warn','crashed':'opp-bad',
+    'unreachable':'opp-bad' }[ph]||'opp-dim';
+  const p=nd&&nd.probe||{};
+  const tip='disk '+(p.disk_free_g??'?')+'G / mem '+(p.mem_avail_g??'?')+'G / port8000 '+(p.port8000?'up':'down');
+  return `<span class="opspill" title="${esc(tip)}">${esc(nd&&nd.role||'?')}:${esc(ph)}<span class="${cls}">&#9679;</span></span>`;
+}
+function renderOpsState(st){
+  const bits=Object.values(st.nodes||{}).map(pillFor);
+  const jobs=Object.values(st.jobs||{}).filter(j=>j&&j.state!=='done');
+  if(st.fleet_ok)bits.push('<span class="opspill opp-ok">FLEET SERVING</span>');
+  if(jobs.length)bits.push('<span class="opspill opp-warn">'+esc(jobs.map(j=>j.id+':'+j.state).join(', '))+'</span>');
+  $ops.grid.innerHTML=bits.join('')||'<span class="opspill opp-dim">no data</span>';
+}
+async function tickOps(){
+  try{
+    const r=await fetch('/api/ops/state',{cache:'no-store'});
+    const st=await r.json();
+    if(st.ok)renderOpsState(st);
+  }catch(e){$ops.grid.innerHTML='<span class="opspill opp-bad">ops unreachable</span>';}
+}
+setInterval(tickOps,3000);tickOps();
+const OPS_JOBS={
+  launch:()=>({node:$ops.node.value,variant:$ops.variant.value}),
+  stop:()=>({node:$ops.node.value}),
+  'collect-logs':()=>({}),
+  audit:()=>({}),
+  'snapshot-image':()=>({node:$ops.node.value}),
+};
+async function runJob(name){
+  if(opsBusy[name])return;opsBusy[name]=true;
+  try{
+    const d=await opsPost(name,OPS_JOBS[name]?OPS_JOBS[name]():{});
+    if(!d.ok){opsLog('rejected: '+(d.error||'unknown'));return;}
+    if(d.smoke){opsLog('smoke '+(d.smoke.ok?'ok':'FAIL')+' '+(d.smoke.models||d.smoke.error||''));return;}
+    opsLog(d.job+' accepted, running\u2026');
+    for(let i=0;i<120;i++){
+      await new Promise(r=>setTimeout(r,1500));
+      const j=await(await fetch('/api/ops/job/'+d.job,{cache:'no-store'})).json();
+      if(!j.ok)break;
+      if(['done','error'].includes(j.job.state)){
+        const res=j.job.result||{};
+        opsLog(j.id+' '+j.job.state+(j.job.error?' '+j.job.error:'')
+          +(res.report?'\n'+res.report:JSON.stringify(res).slice(0,140)));
+        return;
+      }
+    }
+    opsLog(d.job+' still running after 3min (check Audit later)');
+  }catch(e){opsLog(name+' failed: '+e);}
+  finally{opsBusy[name]=false;}
+}
+document.getElementById('ops-launch').onclick=()=>{
+  const n=$ops.node.value,v=$ops.variant.value;
+  if(!confirm('Run launch-glm53 on '+n+' ('+v+')?\nSafe: refuses if a container is already up on that node.'))return;
+  runJob('launch');};
+document.getElementById('ops-stop').onclick=async()=>{
+  if(!confirm('docker rm -f the vllm_glm53 container on '+$ops.node.value+'?\nGuarded: refuses while the peer rank serves (unless forced).'))return;
+  const d=await runJob('stop');
+  if(d&&d.skipped)opsLog(d.skipped);};
+document.getElementById('ops-smoke').onclick=()=>runJob('smoke');
+document.getElementById('ops-logs').onclick=()=>runJob('collect-logs');
+document.getElementById('ops-audit').onclick=()=>runJob('audit');
+document.getElementById('ops-snap').onclick=()=>runJob('snapshot-image');
+
 // -- Module collapse + rearrange --------------------------------------------
 // Per-browser layout in localStorage; the server stays stateless. A saved
 // order lists data-mod keys: unknown keys are ignored and a module missing
@@ -1958,6 +2113,8 @@ def main():
         store = CFG["server"].get("token_store") or "data/token_usage.json"
         TOKEN_STORE = os.path.expanduser(store)
         _load_tokens()
+    fleet_ops.ops_bind(dict(globals()))
+    fleet_ops.init_ops()
     start_pollers()
     bind, port = CFG["server"]["bind"], int(CFG["server"]["port"])
     httpd = ThreadingHTTPServer((bind, port), Handler)
