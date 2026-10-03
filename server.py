@@ -1090,8 +1090,14 @@ class Handler(BaseHTTPRequestHandler):
             req = json.loads(self.rfile.read(ln) or b"{}") if ln else {}
         except (ValueError, UnicodeDecodeError):
             req = {}
-        action = self.path[len("/api/ops/"):].strip("/")
-        out = fleet_ops.api_post(action, req if isinstance(req, dict) else {})
+        if not isinstance(req, dict):
+            req = {}
+        # the browser client passes the ops key (and any fallback args) in the
+        # query string; body values win over query values on collision
+        q = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+        req.update({k: v[-1] for k, v in q.items()})
+        action = self.path[len("/api/ops/"):].split("?")[0].strip("/")
+        out = fleet_ops.api_post(action, req)
         self._send(200, json.dumps(out), "application/json")
 
     def do_GET(self):
