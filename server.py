@@ -1325,6 +1325,8 @@ PAGE = r"""<!DOCTYPE html>
 
   .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(310px,1fr));gap:18px;margin-bottom:22px}
   .grid.solo{grid-template-columns:1fr}
+  /* GPU + System side by side inside a node; stacks only on narrow screens */
+  .grid.halves{grid-template-columns:repeat(auto-fit,minmax(240px,1fr));align-items:start}
   .card{
     background:var(--card);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);
     border:1px solid var(--border);border-radius:16px;padding:18px 20px;
@@ -1787,10 +1789,11 @@ function renderNode(node, hist){
   const reach = node.reachable;
   let html = `<div class="section-h">◢ ${escH(node.name)}
     <span class="badge ${reach?'':'off'}">${reach?(gpus.length+' GPU'):'OFFLINE'}</span><span class="ln"></span></div>`;
-  if(gpus.length){
-    html += `<div class="grid">${gpus.map(g=>renderGpu(node,g,hist)).join('')}</div>`;
-  }
-  html += `<div class="grid solo">${renderNodeSys(node)}</div>`;
+  // GPU card(s) + host System card side by side (halves); the .halves grid
+  // stacks full-width on narrow viewports. Both cards are width-agnostic:
+  // the temp/power .stack wraps, rows/bars are fluid, and the temp
+  // sparkline is an SVG viewBox that scales with the card.
+  html += `<div class="grid halves">${gpus.map(g=>renderGpu(node,g,hist)).join('')}${renderNodeSys(node)}</div>`;
   if(models.length){
     html += `<div class="section-h acc">▸ Model performance<span class="ln"></span></div>`;
     html += `<div class="grid">${models.map(m=>renderModel(m)).join('')}</div>`;
