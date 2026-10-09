@@ -615,7 +615,11 @@ def _op_fleet_start(jid, args):
         raise RuntimeError(f"head {OPS['head']} unreachable: "
                            f"{probed.get('error', 'probe failed')}")
     if probed.get("port8000"):
-        raise RuntimeError(":8000 already answers; refusing to start over it")
+        # Fleet already live: a refusal, not a failure - report like the
+        # launch/stop skip paths so the panel shows no error pill.
+        _job_note(jid, ":8000 already answers - fleet live, nothing to start")
+        return {"ok": True,
+                "skipped": ":8000 already answers (fleet live); nothing to start"}
     for node in (OPS["worker"], OPS["head"]):
         p = probe_node(node)
         ranks = p.get("ranks") or {}
