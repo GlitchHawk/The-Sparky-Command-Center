@@ -1276,13 +1276,15 @@ PAGE = r"""<!DOCTYPE html>
      Each panel is wrapped in .mod with its own .modbar handle. Collapse and
      order are per-browser (localStorage) so the server stays stateless and a
      wrecked layout is fixed by clearing two keys.
-     Modules flow in one or two columns (#modules.two-col): grid auto-
-     placement alternates the visible order left/right, so drag-reorder and
-     the column toggle share one source of truth (the DOM order). Below
-     1100px the two-column layout collapses back to one automatically. */
-  #modules{display:grid;grid-template-columns:1fr;align-items:start}
-  #modules.two-col{grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:0 26px}
-  @media(max-width:1100px){#modules.two-col{grid-template-columns:1fr}}
+     Two independent column stacks (#modules.two-col with one .mcol per
+     side): modules stack within their own column, so a tall module never
+     drags the module below it down (no masonry gaps). Column membership is
+     part of the saved order. Below 1100px the columns stack full-width. */
+  #modules{display:flex;flex-direction:column}
+  #modules.two-col{flex-direction:row;gap:0 26px;align-items:flex-start}
+  .mcol{display:block;min-width:0;flex:1 1 100%}
+  #modules.two-col .mcol{flex:1 1 0}
+  #modules:not(.two-col) .mcol{flex:none;width:100%}
   .mod{display:block;margin-bottom:6px;min-width:0}
   .mod[hidden]{display:none}
   .modbar{display:flex;align-items:center;gap:10px;cursor:pointer;user-select:none;
@@ -1306,6 +1308,9 @@ PAGE = r"""<!DOCTYPE html>
   .ctl:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
   .ctl.active{background:var(--accent);color:var(--on-accent);border-color:var(--accent)}
 
+  body.rearranging .mcol{min-height:80px;border:1px dashed transparent;border-radius:12px}
+  body.rearranging .mcol.drop-target{border-color:var(--accent);
+    background:rgba(var(--accent-rgb),0.06)}
   body.rearranging .mod{border:1px dashed rgba(var(--accent-rgb),0.45);border-radius:12px;
     padding:8px 10px;margin-bottom:12px;background:rgba(var(--accent-rgb),0.03)}
   body.rearranging .modbar .grip{display:inline-block}
@@ -1488,11 +1493,22 @@ select.opsbtn{appearance:none;padding-right:14px}
 
 <div class="summary" id="summary"></div>
 
-<div id="modules">
+<div id="modules" class="two-col">
+  <div class="mcol" data-col="left">
   <section class="mod" data-mod="nodes">
     <div class="modbar"><span class="grip">&#8942;&#8942;</span><span class="chev">&#9662;</span>Nodes<span class="ln"></span></div>
     <div class="mod-body"><div id="nodes"></div></div>
   </section>
+  <section class="mod" data-mod="fleetmodels">
+    <div class="modbar"><span class="grip">&#8942;&#8942;</span><span class="chev">&#9662;</span>Fleet Models<span class="ln"></span></div>
+    <div class="mod-body"><div id="fleet-models"></div></div>
+  </section>
+  <section class="mod" data-mod="tokens">
+    <div class="modbar"><span class="grip">&#8942;&#8942;</span><span class="chev">&#9662;</span>Token Tracker<span class="ln"></span></div>
+    <div class="mod-body"><div id="token-tracker"></div></div>
+  </section>
+  </div>
+  <div class="mcol" data-col="right">
   <section class="mod" data-mod="ops">
     <div class="modbar"><span class="grip">&#8942;&#8942;</span><span class="chev">&#9662;</span>Fleet Ops<span class="ln"></span></div>
     <div class="mod-body">
@@ -1516,14 +1532,6 @@ select.opsbtn{appearance:none;padding-right:14px}
       </div>
       <pre id="ops-log">waiting for ops state&#8230;</pre>
     </div>
-  </section>
-  <section class="mod" data-mod="fleetmodels">
-    <div class="modbar"><span class="grip">&#8942;&#8942;</span><span class="chev">&#9662;</span>Fleet Models<span class="ln"></span></div>
-    <div class="mod-body"><div id="fleet-models"></div></div>
-  </section>
-  <section class="mod" data-mod="tokens">
-    <div class="modbar"><span class="grip">&#8942;&#8942;</span><span class="chev">&#9662;</span>Token Tracker<span class="ln"></span></div>
-    <div class="mod-body"><div id="token-tracker"></div></div>
   </section>
   <section class="mod" data-mod="eco">
     <div class="modbar"><span class="grip">&#8942;&#8942;</span><span class="chev">&#9662;</span>&#127811; Clock ECO Mode<span class="ln"></span></div>
@@ -1554,6 +1562,7 @@ select.opsbtn{appearance:none;padding-right:14px}
     <div class="modbar"><span class="grip">&#8942;&#8942;</span><span class="chev">&#9662;</span>Video Generation<span class="ln"></span></div>
     <div class="mod-body"><div class="grid" id="comfy-grid"></div></div>
   </section>
+  </div>
 </div>
 
 <div class="footer">READ-ONLY - polled over SSH + HTTP /metrics - never disturbs live inference</div>
@@ -2032,14 +2041,19 @@ document.addEventListener('click', ev=>{
 });
 document.addEventListener('keydown', ev=>{ if(ev.key==='Escape') closeThemeMenu(); });
 
-const LS_ORDER='fleet.modOrder.v2', LS_COLLAPSED='fleet.modCollapsed', LS_COLS='fleet.modCols';
+const LS_ORDER='fleet.modOrder.v3', LS_COLLAPSED='fleet.modCollapsed', LS_COLS='fleet.modCols';
 const modBox=document.getElementById('modules');
-function mods(){ return [].slice.call(modBox.querySelectorAll(':scope > .mod')); }
+function mcols(){ return [].slice.call(modBox.querySelectorAll(':scope > .mcol')); }
+function mods(){ return [].slice.call(modBox.querySelectorAll('.mod')); }
 function findMod(id){
-  return modBox.querySelector(':scope > .mod[data-mod="'+CSS.escape(id)+'"]');
+  return modBox.querySelector('.mod[data-mod="'+CSS.escape(id)+'"]');
 }
 function saveOrder(){
-  try{ localStorage.setItem(LS_ORDER, JSON.stringify(mods().map(m=>m.dataset.mod))); }catch(e){}
+  // Column membership is part of the layout: one array of module-id arrays,
+  // index-aligned with the .mcol containers.
+  try{ localStorage.setItem(LS_ORDER, JSON.stringify(
+    mcols().map(c=>[].slice.call(c.querySelectorAll(':scope > .mod'))
+                          .map(m=>m.dataset.mod)))); }catch(e){}
 }
 function saveCollapsed(){
   try{ localStorage.setItem(LS_COLLAPSED,
@@ -2048,6 +2062,22 @@ function saveCollapsed(){
 function restore(key, fn){
   let ids; try{ ids=JSON.parse(localStorage.getItem(key)||'null'); }catch(e){}
   if(Array.isArray(ids)) ids.forEach(id=>{ const el=findMod(id); if(el) fn(el); });
+}
+function restoreOrder(){
+  // v3 format: [[left...],[right...]]. Fallback: v2 flat order is split by
+  // alternating index so the old row pairing keeps its column side.
+  let v; try{ v=JSON.parse(localStorage.getItem(LS_ORDER)||'null'); }catch(e){}
+  if(!Array.isArray(v) || !v.length){
+    try{ v=JSON.parse(localStorage.getItem('fleet.modOrder.v2')||'null'); }catch(e){}
+  }
+  if(!Array.isArray(v) || !v.length) return;
+  const cols=mcols();
+  if(Array.isArray(v[0])){
+    v.forEach((ids,ci)=>{ if(!cols[ci]) return;
+      ids.forEach(id=>{ const el=findMod(id); if(el) cols[ci].appendChild(el); }); });
+  }else{
+    v.forEach((id,i)=>{ const el=findMod(id); if(el) cols[i%2].appendChild(el); });
+  }
 }
 function syncExpandBtn(){
   document.getElementById('expand-btn').innerHTML =
@@ -2087,19 +2117,29 @@ modBox.addEventListener('dragover', ev=>{
   if(!dragEl) return;
   ev.preventDefault(); ev.dataTransfer.dropEffect='move';
   const over=ev.target.closest('.mod');
-  if(!over || over===dragEl) return;
-  modBox.querySelectorAll('.drop-target').forEach(e=>e.classList.remove('drop-target'));
-  over.classList.add('drop-target');
-  const r=over.getBoundingClientRect();
-  modBox.insertBefore(dragEl, ev.clientY > r.top + r.height/2 ? over.nextSibling : over);
+  if(over && over!==dragEl){
+    modBox.querySelectorAll('.drop-target').forEach(e=>e.classList.remove('drop-target'));
+    over.classList.add('drop-target');
+    const r=over.getBoundingClientRect();
+    over.parentNode.insertBefore(dragEl, ev.clientY > r.top + r.height/2 ? over.nextSibling : over);
+    return;
+  }
+  // Between modules: dropping into a column's empty tail (or empty column)
+  // moves the module to the END of that column.
+  const col=ev.target.closest('.mcol');
+  if(col && dragEl.parentNode!==col){
+    modBox.querySelectorAll('.drop-target').forEach(e=>e.classList.remove('drop-target'));
+    col.classList.add('drop-target');
+    col.appendChild(dragEl);
+  }
 });
 modBox.addEventListener('drop', ev=>ev.preventDefault());
-restore(LS_ORDER, el=>modBox.appendChild(el));
+restoreOrder();
 restore(LS_COLLAPSED, el=>el.classList.add('collapsed'));
 // -- Columns ----------------------------------------------------------------
-// One or two columns for the module grid; state is per-browser. DOM order is
-// the single source of truth: with auto-placement, alternating items flow
-// left/right, so REARRANGE works identically in both modes.
+// One or two independent column stacks; state is per-browser. Each column's
+// module order is saved separately, so REARRANGE and the toggle are two
+// views of the same saved layout.
 const columnsBtn=document.getElementById('columns-btn');
 function applyCols(two){
   modBox.classList.toggle('two-col', !!two);
