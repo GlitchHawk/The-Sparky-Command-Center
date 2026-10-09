@@ -1531,10 +1531,11 @@ select.opsbtn{appearance:none;padding-right:14px}
           <option value="spark2">spark2 (worker)</option>
         </select>
         <select id="ops-variant" class="opsbtn" title="weights variant">
-          <option value="redhat">redhat</option>
-          <option value="uncen">uncen</option>
+          <option value="flash">flash</option>
         </select>
-        <button class="opsbtn" id="ops-launch">Launch rank</button>
+        <button class="opsbtn" id="ops-launch">Fleet serve</button>
+        <button class="opsbtn" id="ops-fleet-stop">Fleet stop</button>
+        <button class="opsbtn" id="ops-fleet-start">Fleet start</button>
         <button class="opsbtn" id="ops-stop">Stop rank</button>
         <button class="opsbtn" id="ops-smoke">Smoke</button>
         <button class="opsbtn" id="ops-logs">Collect logs</button>
@@ -1930,9 +1931,11 @@ async function tickOps(){
 setInterval(tickOps,3000);tickOps();
 const OPS_JOBS={
   launch:()=>({node:$ops.node.value,variant:$ops.variant.value}),
-  smoke:()=>({node:$ops.node.value}),
+  'fleet-stop':()=>({force:false}),
+  'fleet-start':()=>({}),
   stop:()=>({node:$ops.node.value}),
-  'collect-logs':()=>({}),
+  smoke:()=>({node:$ops.node.value}),
+  'collect-logs':()=>({node:$ops.node.value}),
   audit:()=>({}),
   'snapshot-image':()=>({node:$ops.node.value}),
 };
@@ -1960,10 +1963,16 @@ async function runJob(name){
 }
 document.getElementById('ops-launch').onclick=()=>{
   const n=$ops.node.value,v=$ops.variant.value;
-  if(!confirm('Run launch-glm53 on '+n+' ('+v+')?\nSafe: refuses if a container is already up on that node.'))return;
+  if(!confirm('Fleet serve: run the launcher on the HEAD ('+n+') with '+v+'?\nWorker rank 1 starts first, then head rank 0. Refuses if a rank container is already up.'))return;
   runJob('launch');};
+document.getElementById('ops-fleet-stop').onclick=async()=>{
+  if(!confirm('Fleet stop: stop BOTH ranks (preserved, removable later)?\nHead first, then worker.'))return;
+  const d=await runJob('fleet-stop');};
+document.getElementById('ops-fleet-start').onclick=async()=>{
+  if(!confirm('Fleet start: docker start the preserved ranks (worker first, then head)?\nRefuses if :8000 already answers or a container is missing.'))return;
+  const d=await runJob('fleet-start');};
 document.getElementById('ops-stop').onclick=async()=>{
-  if(!confirm('docker rm -f the vllm_glm53 container on '+$ops.node.value+'?\nGuarded: refuses while the peer rank serves (unless forced).'))return;
+  if(!confirm('Stop ONE rank ('+$ops.node.value+') via stop_preserving (container kept)?\nGuarded: refuses while the peer rank serves (unless forced).'))return;
   const d=await runJob('stop');
   if(d&&d.skipped)opsLog(d.skipped);};
 document.getElementById('ops-smoke').onclick=()=>runJob('smoke');
