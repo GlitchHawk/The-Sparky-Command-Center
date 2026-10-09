@@ -1275,8 +1275,16 @@ PAGE = r"""<!DOCTYPE html>
   /* -- Modules: collapse + rearrange --------------------------------------
      Each panel is wrapped in .mod with its own .modbar handle. Collapse and
      order are per-browser (localStorage) so the server stays stateless and a
-     wrecked layout is fixed by clearing two keys. */
-  .mod{display:block;margin-bottom:6px}
+     wrecked layout is fixed by clearing two keys.
+     Modules flow in one or two columns (#modules.two-col): grid auto-
+     placement alternates the visible order left/right, so drag-reorder and
+     the column toggle share one source of truth (the DOM order). Below
+     1100px the two-column layout collapses back to one automatically. */
+  #modules{display:grid;grid-template-columns:1fr;align-items:start}
+  #modules.two-col{grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:0 26px}
+  @media(max-width:1100px){#modules.two-col{grid-template-columns:1fr}}
+  .mod{display:block;margin-bottom:6px;min-width:0}
+  .mod[hidden]{display:none}
   .modbar{display:flex;align-items:center;gap:10px;cursor:pointer;user-select:none;
     font-size:12px;font-weight:700;letter-spacing:0.16em;text-transform:uppercase;
     color:var(--accent2);padding:6px 8px;margin:6px 0 2px -8px;border-radius:8px;
@@ -1464,6 +1472,7 @@ select.opsbtn{appearance:none;padding-right:14px}
       </div>
       <button id="rearrange-btn" class="ctl" type="button">&#8645; REARRANGE</button>
       <button id="expand-btn" class="ctl" type="button">&#9776; COLLAPSE ALL</button>
+      <button id="columns-btn" class="ctl" type="button">&#9636; TWO COLUMNS</button>
     </div>
   </div>
 </header>
@@ -1480,46 +1489,9 @@ select.opsbtn{appearance:none;padding-right:14px}
 <div class="summary" id="summary"></div>
 
 <div id="modules">
-  <section class="mod" data-mod="eco">
-    <div class="modbar"><span class="grip">&#8942;&#8942;</span><span class="chev">&#9662;</span>&#127811; Clock ECO Mode<span class="ln"></span></div>
-    <div class="mod-body">
-      <div style="display:flex;flex-wrap:wrap;gap:12px;align-items:center;padding:6px 2px">
-        <label style="display:flex;gap:6px;align-items:center">Node
-          <select id="eco-node"><option value="fleet">&#127760; WHOLE FLEET</option></select></label>
-        <label style="display:flex;gap:6px;align-items:center">Level
-          <select id="eco-level">
-            <option value="2200" selected>&#127811; ECO 2200 MHz</option>
-            <option value="2300">ECO 2300 MHz (light)</option>
-            <option value="2000">&#127811;&#127811; ECO 2000 MHz</option>
-            <option value="1800">&#127811;&#127811;&#127811; ECO 1800 MHz (deep saver)</option>
-            <option value="off">&#9940; OFF (full clocks)</option>
-          </select></label>
-        <button id="eco-apply">&#127811; Apply</button>
-        <button id="eco-check">&#128260; Status</button>
-        <a href="https://github.com/tonyd2wild/DGX-Spark-Hard-Poweroff-Fix" target="_blank" style="font-size:12px;opacity:.7">why?</a>
-        <div id="eco-out" style="flex-basis:100%;white-space:pre-line;font-family:monospace;font-size:12px;opacity:.8"></div>
-      </div>
-    </div>
-  </section>
-  <section class="mod" data-mod="tokens">
-    <div class="modbar"><span class="grip">&#8942;&#8942;</span><span class="chev">&#9662;</span>Token Tracker<span class="ln"></span></div>
-    <div class="mod-body"><div id="token-tracker"></div></div>
-  </section>
-  <section class="mod" data-mod="switch">
-    <div class="modbar"><span class="grip">&#8942;&#8942;</span><span class="chev">&#9662;</span>Fabric Switch<span class="ln"></span></div>
-    <div class="mod-body"><div id="switch"></div></div>
-  </section>
   <section class="mod" data-mod="nodes">
     <div class="modbar"><span class="grip">&#8942;&#8942;</span><span class="chev">&#9662;</span>Nodes<span class="ln"></span></div>
     <div class="mod-body"><div id="nodes"></div></div>
-  </section>
-  <section class="mod" data-mod="fleetmodels">
-    <div class="modbar"><span class="grip">&#8942;&#8942;</span><span class="chev">&#9662;</span>Fleet Models<span class="ln"></span></div>
-    <div class="mod-body"><div id="fleet-models"></div></div>
-  </section>
-  <section class="mod" data-mod="video" id="mod-video" hidden>
-    <div class="modbar"><span class="grip">&#8942;&#8942;</span><span class="chev">&#9662;</span>Video Generation<span class="ln"></span></div>
-    <div class="mod-body"><div class="grid" id="comfy-grid"></div></div>
   </section>
   <section class="mod" data-mod="ops">
     <div class="modbar"><span class="grip">&#8942;&#8942;</span><span class="chev">&#9662;</span>Fleet Ops<span class="ln"></span></div>
@@ -1544,6 +1516,43 @@ select.opsbtn{appearance:none;padding-right:14px}
       </div>
       <pre id="ops-log">waiting for ops state&#8230;</pre>
     </div>
+  </section>
+  <section class="mod" data-mod="fleetmodels">
+    <div class="modbar"><span class="grip">&#8942;&#8942;</span><span class="chev">&#9662;</span>Fleet Models<span class="ln"></span></div>
+    <div class="mod-body"><div id="fleet-models"></div></div>
+  </section>
+  <section class="mod" data-mod="tokens">
+    <div class="modbar"><span class="grip">&#8942;&#8942;</span><span class="chev">&#9662;</span>Token Tracker<span class="ln"></span></div>
+    <div class="mod-body"><div id="token-tracker"></div></div>
+  </section>
+  <section class="mod" data-mod="eco">
+    <div class="modbar"><span class="grip">&#8942;&#8942;</span><span class="chev">&#9662;</span>&#127811; Clock ECO Mode<span class="ln"></span></div>
+    <div class="mod-body">
+      <div style="display:flex;flex-wrap:wrap;gap:12px;align-items:center;padding:6px 2px">
+        <label style="display:flex;gap:6px;align-items:center">Node
+          <select id="eco-node"><option value="fleet">&#127760; WHOLE FLEET</option></select></label>
+        <label style="display:flex;gap:6px;align-items:center">Level
+          <select id="eco-level">
+            <option value="2200" selected>&#127811; ECO 2200 MHz</option>
+            <option value="2300">ECO 2300 MHz (light)</option>
+            <option value="2000">&#127811;&#127811; ECO 2000 MHz</option>
+            <option value="1800">&#127811;&#127811;&#127811; ECO 1800 MHz (deep saver)</option>
+            <option value="off">&#9940; OFF (full clocks)</option>
+          </select></label>
+        <button id="eco-apply">&#127811; Apply</button>
+        <button id="eco-check">&#128260; Status</button>
+        <a href="https://github.com/tonyd2wild/DGX-Spark-Hard-Poweroff-Fix" target="_blank" style="font-size:12px;opacity:.7">why?</a>
+        <div id="eco-out" style="flex-basis:100%;white-space:pre-line;font-family:monospace;font-size:12px;opacity:.8"></div>
+      </div>
+    </div>
+  </section>
+  <section class="mod" data-mod="switch">
+    <div class="modbar"><span class="grip">&#8942;&#8942;</span><span class="chev">&#9662;</span>Fabric Switch<span class="ln"></span></div>
+    <div class="mod-body"><div id="switch"></div></div>
+  </section>
+  <section class="mod" data-mod="video" id="mod-video" hidden>
+    <div class="modbar"><span class="grip">&#8942;&#8942;</span><span class="chev">&#9662;</span>Video Generation<span class="ln"></span></div>
+    <div class="mod-body"><div class="grid" id="comfy-grid"></div></div>
   </section>
 </div>
 
@@ -2023,7 +2032,7 @@ document.addEventListener('click', ev=>{
 });
 document.addEventListener('keydown', ev=>{ if(ev.key==='Escape') closeThemeMenu(); });
 
-const LS_ORDER='fleet.modOrder', LS_COLLAPSED='fleet.modCollapsed';
+const LS_ORDER='fleet.modOrder.v2', LS_COLLAPSED='fleet.modCollapsed', LS_COLS='fleet.modCols';
 const modBox=document.getElementById('modules');
 function mods(){ return [].slice.call(modBox.querySelectorAll(':scope > .mod')); }
 function findMod(id){
@@ -2087,6 +2096,24 @@ modBox.addEventListener('dragover', ev=>{
 modBox.addEventListener('drop', ev=>ev.preventDefault());
 restore(LS_ORDER, el=>modBox.appendChild(el));
 restore(LS_COLLAPSED, el=>el.classList.add('collapsed'));
+// -- Columns ----------------------------------------------------------------
+// One or two columns for the module grid; state is per-browser. DOM order is
+// the single source of truth: with auto-placement, alternating items flow
+// left/right, so REARRANGE works identically in both modes.
+const columnsBtn=document.getElementById('columns-btn');
+function applyCols(two){
+  modBox.classList.toggle('two-col', !!two);
+  columnsBtn.innerHTML = two ? '&#9636; ONE COLUMN' : '&#9636; TWO COLUMNS';
+  try{ localStorage.setItem(LS_COLS, two?'2':'1'); }catch(e){}
+}
+(function initCols(){
+  let v; try{ v=localStorage.getItem(LS_COLS); }catch(e){}
+  // default ON: two columns unless this browser explicitly chose one
+  applyCols(v!=='1');
+})();
+columnsBtn.addEventListener('click', ()=>{
+  applyCols(!modBox.classList.contains('two-col'));
+});
 syncExpandBtn();
 // --- Clock ECO Mode -------------------------------------------------------
 (function(){
